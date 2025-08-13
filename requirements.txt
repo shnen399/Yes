@@ -1,6 +1,5 @@
 fastapi
 uvicorn[standard]
-playwright
 apscheduler
 httpx
 beautifulsoup4
