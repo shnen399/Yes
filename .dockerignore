@@ -1,30 +1,24 @@
-FROM python:3.11-slim
-
-ENV DEBIAN_FRONTEND=noninteractive \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PYTHONUNBUFFERED=1
-
-# 系統依賴（新增：libxkbcommon0 / pango / cairo）
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# 安裝 Playwright 瀏覽器依賴
+RUN apt-get update && apt-get install -y \
     wget curl gnupg ca-certificates xdg-utils \
     fonts-liberation libasound2 libatk1.0-0 libatk-bridge2.0-0 \
     libcups2 libdbus-1-3 libdrm2 libgbm1 libgtk-3-0 \
     libnss3 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 \
-    libxdamage1 libxext6 libxfixes3 libxrandr2 libxrender1 libxshmfence1 \
-    libxkbcommon0 libpango-1.0-0 libpangocairo-1.0-0 libcairo2 \
+    libxdamage1 libxext6 libxfixes3 libxrandr2 libxrender1 \
+    libxshmfence1 libxkbcommon0 libpango-1.0-0 libpangocairo-1.0-0 libpangoft2-1.0-0 libharfbuzz0b libfreetype6 libfontconfig1 libatspi2.0-0 libwayland-client0 libwayland-cursor0 libwayland-egl1 \
  && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# 更新 pip 並安裝依賴
+RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
-
-# 這行仍會吃較多記憶體，免費方案可能會失敗
+# 設定 Playwright 瀏覽器路徑
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+# 安裝 chromium
 RUN python -m playwright install --with-deps chromium
 
+# 複製程式碼到容器
 COPY . .
 
-ENV PORT=10000
-CMD ["sh","-c","uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}"]
+# 啟動應用
+CMD ["python", "main.py"]
