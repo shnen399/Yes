@@ -1,51 +1,63 @@
 import os
 import asyncio
-import contextlib
 import httpx
+import logging
+from typing import List, Tuple
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+
+# 嘗試匯入排程（沒有的話忽略）
+try:
+    from scheduler import start_scheduler
+except ImportError:
+    start_scheduler = None
+
+# 設定日誌
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
+log = logging.getLogger(__name__)
 
 app = FastAPI(
     title="PIXNET 自動發文系統",
-    version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
 
-# ---- 基本路由 ----
-@app.get("/")
-def home():
-    return {"message": "PIXNET 自動發文系統已啟動"}
+# 從環境變數讀帳密
+def _read_accounts_from_env() -> List[Tuple[str, str]]:
+    raw = os.getenv("PIXNET_ACCOUNTS", "").strip()
+    accounts = []
+    for line in raw.splitlines():
+        if ":" in line:
+            email, pwd = line.strip().split(":", 1)
+            accounts.append((email, pwd))
+    return accounts
 
-@app.get("/healthz")
-def healthz():
-    return {"status": "ok"}
+# API 路徑
+@app.get("/")
+def root():
+    return {"message": "PIXNET Auto Poster 已啟動"}
+
+@app.get("/post_article")
+def manual_post():
+    from post_to_pixnet import post_article_once
+    res = post_article_once()
+    return JSONResponse(content=res)
 
 @app.get("/ping")
-async def ping():
-    return {"ok": True}
+def ping():
+    return {"status": "ok"}
 
-@app.post("/post_article")
-def post_article():
-    # 這裡放你的發文邏輯（目前先回測試成功）
-    return {"status": "success", "message": "文章已發佈（測試）"}
+# 啟動排程
+if start_scheduler:
+    try:
+        start_scheduler()
+    except Exception as e:
+        log.error(f"啟動排程失敗: {e}")
 
-# ---- 保活任務（Free 方案避免休眠）----
-# Render 會自動提供 RENDER_EXTERNAL_URL（例如 https://yes-p512.onrender.com）
-BASE_URL = os.getenv("RENDER_EXTERNAL_URL")
-INTERVAL_SEC = int(os.getenv("KEEPALIVE_INTERVAL", "270"))  # 預設 4.5 分鐘
-
-async def keep_alive():
-    if not BASE_URL:
-        # 若本地啟動或沒提供外網 URL，就不做保活
-        return
-    async with httpx.AsyncClient(timeout=10) as client:
-        while True:
-            with contextlib.suppress(Exception):
-                await client.get(f"{BASE_URL}/ping")
-            await asyncio.sleep(INTERVAL_SEC)
-
+# ---- keep-alive（避免 Render 免費版冷啟動）----
 @app.on_event("startup")
-async def _startup():
-    # 啟動背景任務（不阻塞主執行緒）
-    asyncio.create_task(keep_alive())
+async def _start_keepalive():
+    base = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+    if not base:
+        log.warning("未偵測到 RENDER
