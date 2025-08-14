@@ -1,11 +1,11 @@
-# 讓 Render / 本地都一致：Python 3.11 + Debian slim
+# 讓 Render / 本地一致：Python 3.11 + Debian slim
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1
 
-# 安裝 Playwright/Chromium 需要的系統相依套件（一次裝好）
+# 安裝 Playwright/Chromium 需要的系統相依套件（一併裝好）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget curl gnupg ca-certificates xdg-utils \
     fonts-liberation libasound2 libatk1.0-0 libatk-bridge2.0-0 \
@@ -22,14 +22,14 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
 
-# 安裝 Playwright 並把 Chromium 下載進 image（部署後就能直接用）
+# 安裝 Playwright 並把 Chromium 下載進 image
 RUN pip install playwright && playwright install chromium
 
 # 複製程式碼
 COPY . .
 
-# Render/本地統一對外埠號
-EXPOSE 10000
+# Render / 本地統一對外埠號（改成 $PORT）
+EXPOSE $PORT
 
-# 啟動 FastAPI（Render 的 Docker 服務會讀這個 CMD）
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]
+# 啟動 FastAPI（改成使用 $PORT）
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port $PORT"]
