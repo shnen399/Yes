@@ -1,10 +1,8 @@
 import os
-import asyncio
-import httpx
-from fastapi import FastAPI
 from typing import List, Tuple
+from fastapi import FastAPI
 
-# 嘗試匯入排程（沒有的話忽略）
+# 嘗試匯入排程（若沒有就略過）
 try:
     from scheduler import start_scheduler
 except ImportError:
@@ -17,7 +15,7 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-# 讀取多帳號
+# 讀取多帳號（環境變數 PIXNET_ACCOUNTS，每行 email:password）
 def _read_accounts_from_env() -> List[Tuple[str, str]]:
     raw = os.getenv("PIXNET_ACCOUNTS", "").strip()
     accounts = []
@@ -27,7 +25,7 @@ def _read_accounts_from_env() -> List[Tuple[str, str]]:
             accounts.append((email, pwd))
     return accounts
 
-# 啟動排程
+# 啟動排程（若有）
 if start_scheduler:
     try:
         start_scheduler()
@@ -43,13 +41,12 @@ async def test_accounts():
     accounts = _read_accounts_from_env()
     return {"accounts": accounts}
 
-# 支援 GET + POST 的發文 API
+# ✅ GET + POST 都能觸發
 @app.get("/post_article")
 @app.post("/post_article")
 async def post_article():
     accounts = _read_accounts_from_env()
     if not accounts:
-        return {"status": "fail", "error": "未偵測到帳號資訊"}
-
-    # 這裡放發文邏輯（範例回傳）
-    return {"status": "success", "message": "測試發文完成", "accounts": accounts}
+        return {"status": "fail", "error": "未偵測到帳號資訊（請設定 PIXNET_ACCOUNTS）"}
+    # TODO: 在這裡放真正發文邏輯
+    return {"status": "success", "message": "測試發文完成"}
