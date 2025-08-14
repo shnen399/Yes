@@ -1,3 +1,6 @@
-fastapi
-uvicorn
-playwright
+fastapi==0.116.1
+uvicorn[standard]==0.30.6
+python-dotenv==1.0.1
+requests==2.32.3
+# playwright 也可寫進來，但仍需要在 Dockerfile 執行一次 `playwright install chromium`
+playwright==1.45.0
