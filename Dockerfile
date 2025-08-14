@@ -1,15 +1,25 @@
 # ---- 基本建置 ----
 FROM python:3.11-slim
 
+# 安裝 Playwright 必要系統套件
+RUN apt-get update && apt-get install -y \
+    wget curl gnupg ca-certificates xdg-utils \
+    fonts-liberation libasound2 libatk1.0-0 libatk-bridge2.0-0 \
+    libcups2 libdbus-1-3 libdrm2 libgbm1 libgtk-3-0 \
+    libnss3 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 \
+    libxdamage1 libxext6 libxfixes3 libxrandr2 libxrender1 libxshmfence1 \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-# 用 module 呼叫，較穩定
+
+# 安裝 Chromium
 RUN python -m playwright install --with-deps chromium
 
-# 把所有程式(含 panel_article.py)打包進容器
+# 複製全部程式（包含 panel_article.py）
 COPY . .
 
-# 啟動
+# 啟動 FastAPI
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]
