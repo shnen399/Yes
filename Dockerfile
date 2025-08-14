@@ -1,10 +1,15 @@
-# 直接用已內建 Chromium/依賴的 Playwright 官方映像
-FROM mcr.microsoft.com/playwright/python:v1.46.0-jammy
+FROM python:3.11-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget curl ca-certificates gnupg xdg-utils fonts-liberation \
+    libasound2 libatk1.0-0 libatk-bridge2.0-0 libnss3 libx11-6 libxi6 \
+    libx11-xcb1 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 \
+    libxrandr2 libxrender1 libxshmfence1 libglib2.0-0 libgbm1 \
+  && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-# 安裝 Python 套件
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-# 拷貝全部程式碼
+# ➜ 把 Chromium 裝進映像（關鍵）
+RUN python -m playwright install --with-deps chromium
 COPY . .
-# Render 會幫你設好 $PORT，但我們用固定 10000 也可（你之前就是 10000）
+EXPOSE 10000
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]
