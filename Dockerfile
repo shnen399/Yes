@@ -1,4 +1,4 @@
-RUNapt-getupdate&&apt-getinstall-y\
+RUN apt-getupdate&&apt-getinstall-y\
     wgetcurlgnupgca-certificatesxdg-utils\
     fonts-liberationlibasound2libatk1.0-0libatk-bridge2.0-0\
     libcups2libdbus-1-3libdrm2libgbm1libgtk-3-0\
