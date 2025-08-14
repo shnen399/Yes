@@ -1,20 +1,26 @@
-# main.py — 強制真發文（忽略外部 dry_run）
+# main.py — 用 thread 執行同步版 Playwright，避免 asyncio 衝突
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import asyncio, traceback
+import asyncio
+import traceback
 
-app = FastAPI(title="PIXNET 自動發文系統", docs_url="/docs", redoc_url="/redoc", openapi_url="/openapi.json")
+app = FastAPI(
+    title="PIXNET 自動發文系統",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+)
 
-# 連接你的發文函式
+# 匯入你的同步函式（panel_article.py）
 try:
-    from panel_article import post_article_once  # type: ignore
+    from panel_article import post_article_once  # 同步函式
 except Exception as e:
     post_article_once = None  # type: ignore
     print("WARNING: cannot import panel_article.post_article_once:", e)
 
 class PostReq(BaseModel):
-    # 仍保留欄位，但實際上會被忽略
+    # 仍保留欄位（實作時會強制真發文）
     dry_run: bool | None = None
     timeout_sec: int | None = 180
 
@@ -26,28 +32,38 @@ def root():
 def healthz():
     return JSONResponse({"ok": True})
 
+def _run_blocking_real_post() -> dict:
+    """
+    在純同步環境下呼叫同步的 Playwright 實作。
+    這個函式會被丟到 thread 裡執行，避免在事件迴圈裡觸發 Playwright 的偵測。
+    """
+    # 強制真發文（忽略外部 dry_run）
+    try:
+        try:
+            return post_article_once(dry_run=False)  # type: ignore[arg-type]
+        except TypeError:
+            # 若你的 post_article_once 不接受參數
+            return post_article_once()  # type: ignore[call-arg]
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}", "logs": []}
+
 @app.post("/post_article")
 async def post_article(_: PostReq | None = None):
     if post_article_once is None:
-        return JSONResponse(status_code=500, content={"status": "fail", "error": "panel_article.post_article_once 不存在或匯入失敗"})
+        return JSONResponse(
+            status_code=500,
+            content={"status": "fail", "error": "panel_article.post_article_once 不存在或匯入失敗"},
+        )
 
-    timeout = 180
-    # 這裡直接寫死為 False（真發文）
-    force_dry_run = False
+    timeout = 180  # 可改成從 body 讀，但現在寫死即可
+    loop = asyncio.get_running_loop()
 
     try:
-        async def _run():
-            # 優先嘗試帶參數；若你的函式不吃參數再退回不帶
-            try:
-                if asyncio.iscoroutinefunction(post_article_once):
-                    return await post_article_once(dry_run=force_dry_run)
-                return post_article_once(dry_run=force_dry_run)
-            except TypeError:
-                if asyncio.iscoroutinefunction(post_article_once):
-                    return await post_article_once()
-                return post_article_once()
-
-        result = await asyncio.wait_for(_run(), timeout=timeout)
+        # 用 thread 執行同步 Playwright，避免「Sync API inside asyncio loop」錯誤
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, _run_blocking_real_post),
+            timeout=timeout,
+        )
 
         if isinstance(result, dict) and result.get("ok"):
             return {"status": "ok", "result": result}
@@ -56,6 +72,6 @@ async def post_article(_: PostReq | None = None):
 
     except asyncio.TimeoutError:
         return JSONResponse(status_code=504, content={"status": "fail", "error": f"post_article timeout > {timeout}s"})
-    except Exception as e:
+    except Exception:
         print("POST /post_article error:\n", traceback.format_exc())
-        return JSONResponse(status_code=500, content={"status": "fail", "error": f"{type(e).__name__}: {e}"})
+        return JSONResponse(status_code=500, content={"status": "fail", "error": "internal error"})
