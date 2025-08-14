@@ -5,10 +5,10 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-# Playwright（你有用到）
-RUN playwright install --with-deps chromium
+# 用 module 呼叫，較穩定
+RUN python -m playwright install --with-deps chromium
 
-# 這行要把「所有檔案」包含 panel_article.py 拷進映像
+# 把所有程式(含 panel_article.py)打包進容器
 COPY . .
 
 # 啟動
