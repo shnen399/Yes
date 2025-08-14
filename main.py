@@ -1,6 +1,4 @@
 import os
-import asyncio
-import httpx
 from fastapi import FastAPI
 from typing import List, Tuple
 
@@ -43,7 +41,6 @@ async def test_accounts():
     accounts = _read_accounts_from_env()
     return {"accounts": accounts}
 
-# 範例 POST 發文 API
 @app.post("/post_article")
 async def post_article():
     accounts = _read_accounts_from_env()
@@ -51,3 +48,7 @@ async def post_article():
         return {"status": "fail", "error": "未偵測到帳號資訊"}
     # 這裡放發文邏輯
     return {"status": "success", "message": "測試發文完成"}
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=int(os.environ.get("PORT", 8000)))
