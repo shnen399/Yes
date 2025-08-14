@@ -1,20 +1,14 @@
 import os
 import asyncio
 import httpx
-import logging
-from typing import List, Tuple
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from typing import List, Tuple
 
 # 嘗試匯入排程（沒有的話忽略）
 try:
     from scheduler import start_scheduler
 except ImportError:
     start_scheduler = None
-
-# 設定日誌
-logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
-log = logging.getLogger(__name__)
 
 app = FastAPI(
     title="PIXNET 自動發文系統",
@@ -23,7 +17,7 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-# 從環境變數讀帳密
+# 讀取多帳號
 def _read_accounts_from_env() -> List[Tuple[str, str]]:
     raw = os.getenv("PIXNET_ACCOUNTS", "").strip()
     accounts = []
@@ -33,31 +27,27 @@ def _read_accounts_from_env() -> List[Tuple[str, str]]:
             accounts.append((email, pwd))
     return accounts
 
-# API 路徑
-@app.get("/")
-def root():
-    return {"message": "PIXNET Auto Poster 已啟動"}
-
-@app.get("/post_article")
-def manual_post():
-    from post_to_pixnet import post_article_once
-    res = post_article_once()
-    return JSONResponse(content=res)
-
-@app.get("/ping")
-def ping():
-    return {"status": "ok"}
-
 # 啟動排程
 if start_scheduler:
     try:
         start_scheduler()
     except Exception as e:
-        log.error(f"啟動排程失敗: {e}")
+        print(f"排程啟動失敗: {e}")
 
-# ---- keep-alive（避免 Render 免費版冷啟動）----
-@app.on_event("startup")
-async def _start_keepalive():
-    base = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
-    if not base:
-        log.warning("未偵測到 RENDER
+@app.get("/")
+async def root():
+    return {"message": "PIXNET 自動發文系統已啟動"}
+
+@app.get("/test_accounts")
+async def test_accounts():
+    accounts = _read_accounts_from_env()
+    return {"accounts": accounts}
+
+# 範例 POST 發文 API
+@app.post("/post_article")
+async def post_article():
+    accounts = _read_accounts_from_env()
+    if not accounts:
+        return {"status": "fail", "error": "未偵測到帳號資訊"}
+    # 這裡放發文邏輯
+    return {"status": "success", "message": "測試發文完成"}
