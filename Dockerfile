@@ -3,7 +3,7 @@ FROM python:3.11-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     PLAYWRIGHT_BROWSERS_PATH=/opt/render/.cache/ms-playwright
 
-# 系統相依套件（字型+瀏覽器依賴）
+# 系統相依套件（字型 + Chromium 依賴）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget curl ca-certificates gnupg xdg-utils \
     fonts-liberation fonts-unifont fonts-ubuntu \
@@ -14,17 +14,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 libatspi2.0-0 \
  && rm -rf /var/lib/apt/lists/*
 
-# 安裝 Node.js 18
+# Node.js 18（Playwright 需要）
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
  && apt-get update && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*
 
-# Python 環境與依賴
+# Python 依賴
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir playwright && python -m playwright install --with-deps chromium
 
+# 安裝 Playwright + Chromium
+RUN pip install --no-cache-dir playwright \
+ && python -m playwright install --with-deps chromium
+
+# 複製專案
 COPY . /app
 
+# 確保啟動/建置腳本有可執行權限
+RUN chmod +x /app/startup.sh /app/render-build.sh || true
+
+# 啟動（Render 會用 Start Command 覆蓋也沒關係）
 CMD ["bash", "startup.sh"]
