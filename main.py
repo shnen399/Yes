@@ -1,12 +1,12 @@
-import os
-from typing import List, Tuple
+# main.py  — 只示範 /post_article 相關段落
+import logging
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
-# 嘗試匯入排程（若沒有就略過）
-try:
-    from scheduler import start_scheduler
-except ImportError:
-    start_scheduler = None
+from panel_article import post_article_once  # 確保引用到上面的函式
+
+log = logging.getLogger("pixnet")
+logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
 
 app = FastAPI(
     title="PIXNET 自動發文系統",
@@ -15,38 +15,61 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
-# 讀取多帳號（環境變數 PIXNET_ACCOUNTS，每行 email:password）
-def _read_accounts_from_env() -> List[Tuple[str, str]]:
-    raw = os.getenv("PIXNET_ACCOUNTS", "").strip()
-    accounts = []
-    for line in raw.splitlines():
-        if ":" in line:
-            email, pwd = line.strip().split(":", 1)
-            accounts.append((email, pwd))
-    return accounts
+def _normalize_result(res: dict) -> dict:
+    """
+    兼容舊邏輯：不論 panel_article 回什麼格式，都盡量整理出 article_url。
+    允許鍵名是 ok/success、url/article_url、acct/account 等。
+    """
+    if not isinstance(res, dict):
+        return {"ok": False, "error": "Unknown result type."}
 
-# 啟動排程（若有）
-if start_scheduler:
-    try:
-        start_scheduler()
-    except Exception as e:
-        print(f"排程啟動失敗: {e}")
+    ok = bool(res.get("ok", res.get("success", False)))
+    article_url = res.get("article_url") or res.get("url") or res.get("link")
+    title = res.get("title") or res.get("subject") or res.get("headline")
+    account = res.get("account") or res.get("acct") or res.get("email")
 
-@app.get("/")
-async def root():
-    return {"message": "PIXNET 自動發文系統已啟動"}
+    out = {"ok": ok, "article_url": article_url, "title": title, "account": account}
+    if not ok:
+        out["error"] = res.get("error") or res.get("message") or "發文失敗"
+    return out
 
-@app.get("/test_accounts")
-async def test_accounts():
-    accounts = _read_accounts_from_env()
-    return {"accounts": accounts}
-
-# ✅ GET + POST 都能觸發
-@app.get("/post_article")
 @app.post("/post_article")
-async def post_article():
-    accounts = _read_accounts_from_env()
-    if not accounts:
-        return {"status": "fail", "error": "未偵測到帳號資訊（請設定 PIXNET_ACCOUNTS）"}
-    # TODO: 在這裡放真正發文邏輯
-    return {"status": "success", "message": "測試發文完成"}
+def post_article():
+    try:
+        raw = post_article_once()
+        data = _normalize_result(raw)
+
+        if data["ok"] and data.get("article_url"):
+            log.info("發文成功：%s  標題：%s  帳號：%s",
+                     data["article_url"], data.get("title"), data.get("account"))
+            return JSONResponse({
+                "status": "ok",
+                "message": "發文成功",
+                "article_url": data["article_url"],
+                "title": data.get("title"),
+                "account": data.get("account"),
+            })
+
+        # 成功但沒抓到連結的情況（盡量提示）
+        if data["ok"] and not data.get("article_url"):
+            log.warning("發文可能成功，但未取得文章連結。原始回傳：%s", raw)
+            return JSONResponse({
+                "status": "partial",
+                "message": "未取得文章連結，請查後台或檢查抓取邏輯。",
+                "raw": raw,
+            }, status_code=200)
+
+        # 失敗
+        log.error("發文失敗：%s", data.get("error"))
+        return JSONResponse({
+            "status": "fail",
+            "error": data.get("error", "發文失敗"),
+            "raw": raw,
+        }, status_code=500)
+
+    except Exception as e:
+        log.exception("post_article 例外：%s", e)
+        return JSONResponse({
+            "status": "fail",
+            "error": f"例外：{e.__class__.__name__}: {e}",
+        }, status_code=500)
