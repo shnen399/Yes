@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+ FROM python:3.11-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     PLAYWRIGHT_BROWSERS_PATH=/opt/render/.cache/ms-playwright
 # 安裝系統依賴（單行避免續行錯誤）
@@ -12,7 +12,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-# 安裝 Playwright + Chromium（更穩定的三步法）
+# 安裝 Playwright + Chromium（正確英文指令）
 RUN pip install --no-cache-dir playwright && \
     python -m playwright install-deps && \
     python -m playwright install chromium
