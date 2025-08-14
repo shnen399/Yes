@@ -1,9 +1,8 @@
-# main.py — 連 panel_article 並完整回傳結果
+# main.py — 預設真發文（dry_run=False）
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import asyncio
-import traceback
+import asyncio, traceback
 
 app = FastAPI(
     title="PIXNET 自動發文系統",
@@ -23,7 +22,7 @@ if start_scheduler:
     except Exception:
         pass
 
-# 連你的發文函式
+# 連接你的發文函式
 try:
     from panel_article import post_article_once  # type: ignore
 except Exception as e:
@@ -31,7 +30,8 @@ except Exception as e:
     print("WARNING: cannot import panel_article.post_article_once:", e)
 
 class PostReq(BaseModel):
-    dry_run: bool | None = None
+    # 預設就是真發文
+    dry_run: bool | None = False
     timeout_sec: int | None = 180
 
 @app.get("/")
@@ -51,20 +51,25 @@ async def post_article(req: PostReq | None = None):
         )
 
     timeout = (req.timeout_sec if req else None) or 180
+    dry_run = False if req is None or req.dry_run is None else bool(req.dry_run)
 
     try:
         async def _run():
-            if asyncio.iscoroutinefunction(post_article_once):
-                return await post_article_once()
-            return post_article_once()
+            # 優先嘗試帶參數（若你的函式不接受就退回不帶參數）
+            try:
+                if asyncio.iscoroutinefunction(post_article_once):
+                    return await post_article_once(dry_run=dry_run)
+                return post_article_once(dry_run=dry_run)
+            except TypeError:
+                if asyncio.iscoroutinefunction(post_article_once):
+                    return await post_article_once()
+                return post_article_once()
 
         result = await asyncio.wait_for(_run(), timeout=timeout)
 
-        # 期望 result 具有 ok/article_url/title/error/logs
         if isinstance(result, dict) and result.get("ok"):
             return {"status": "ok", "result": result}
         else:
-            # 失敗時也把詳情帶回
             return JSONResponse(status_code=502, content={"status": "fail", "result": result})
 
     except asyncio.TimeoutError:
