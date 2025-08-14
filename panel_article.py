@@ -1,32 +1,80 @@
-# panel_article.py
-from typing import Dict, Any
+# main.py — 連 panel_article 並完整回傳結果
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+import asyncio
+import traceback
 
-def post_article_once() -> Dict[str, Any]:
-    """
-    執行一次發文，成功時請務必回傳 article_url。
-    你原本的登入、填表、送出程式碼保持不變，只需要在成功後整理回傳。
-    """
-    # ====== 你的原本發文流程 ======
-    # login(...)
-    # create_article(...)
-    # 取得成功後的文章網址，例如：
-    # article_url = f"https://{blog_id}.pixnet.net/blog/post/{post_id}"
-    # title = "你的文章標題"
-    # used_account = "email@example.com"
+app = FastAPI(
+    title="PIXNET 自動發文系統",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+)
 
-    # --- 示意（請換成你實際取到的值） ---
-    # article_url = real_article_url
-    # title = real_title
-    # used_account = real_account
+# 可選：啟動排程
+try:
+    from scheduler import start_scheduler  # type: ignore
+except Exception:
+    start_scheduler = None
+if start_scheduler:
+    try:
+        start_scheduler()
+    except Exception:
+        pass
 
-    # ====== 成功回傳 ======
-    return {
-        "ok": True,
-        "article_url": article_url,   # 務必是完整可點的 URL
-        "title": title,
-        "account": used_account,
-        # 可加上更多欄位：published_at、tags、category...
-    }
+# 連你的發文函式
+try:
+    from panel_article import post_article_once  # type: ignore
+except Exception as e:
+    post_article_once = None  # type: ignore
+    print("WARNING: cannot import panel_article.post_article_once:", e)
 
-    # ====== 若失敗請回傳 ======
-    # return {"ok": False, "error": "登入失敗/驗證碼錯誤/..."}
+class PostReq(BaseModel):
+    dry_run: bool | None = None
+    timeout_sec: int | None = 180
+
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "PIXNET 自動發文系統已啟動", "docs": "/docs"}
+
+@app.get("/healthz")
+def healthz():
+    return JSONResponse({"ok": True})
+
+@app.post("/post_article")
+async def post_article(req: PostReq | None = None):
+    if post_article_once is None:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "fail", "error": "panel_article.post_article_once 不存在或匯入失敗"},
+        )
+
+    timeout = (req.timeout_sec if req else None) or 180
+
+    try:
+        async def _run():
+            if asyncio.iscoroutinefunction(post_article_once):
+                return await post_article_once()
+            return post_article_once()
+
+        result = await asyncio.wait_for(_run(), timeout=timeout)
+
+        # 期望 result 具有 ok/article_url/title/error/logs
+        if isinstance(result, dict) and result.get("ok"):
+            return {"status": "ok", "result": result}
+        else:
+            # 失敗時也把詳情帶回
+            return JSONResponse(status_code=502, content={"status": "fail", "result": result})
+
+    except asyncio.TimeoutError:
+        return JSONResponse(
+            status_code=504,
+            content={"status": "fail", "error": f"post_article timeout > {timeout}s"},
+        )
+    except Exception as e:
+        print("POST /post_article error:\n", traceback.format_exc())
+        return JSONResponse(
+            status_code=500,
+            content={"status": "fail", "error": f"{type(e).__name__}: {e}"},
+        )
