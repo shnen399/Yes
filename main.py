@@ -1,23 +1,39 @@
+import os
 from fastapi import FastAPI
-from playwright.sync_api import sync_playwright
+from fastapi.responses import JSONResponse
 
-app = FastAPI(title="PIXNET 自動海報", version="0.1.0")
+# 嘗試匯入排程（沒有的話忽略）
+try:
+    from scheduler import start_scheduler
+except ImportError:
+    start_scheduler = None
 
+app = FastAPI(
+    title="PIXNET 自動發文系統",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+)
+
+# 啟動背景排程（如果有）
+if start_scheduler:
+    try:
+        start_scheduler()
+    except Exception as e:
+        print(f"排程啟動失敗: {e}")
+
+# 首頁路由
 @app.get("/")
-def root():
-    return {"ok": True, "msg": "service alive"}
+def home():
+    return {"message": "PIXNET 自動發文系統已啟動"}
 
-@app.get("/healthz")
-def healthz():
+# 測試 API
+@app.get("/ping")
+def ping():
     return {"status": "ok"}
 
+# 發文 API
 @app.post("/post_article")
 def post_article():
-    # 確認瀏覽器可用：打開 example.com 並回傳標題
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.goto("https://example.com", timeout=60_000)
-        title = page.title()
-        browser.close()
-    return {"status": "success", "title": title}
+    # 這裡可以加你的自動發文邏輯
+    return {"status": "success", "message": "文章已發佈（測試）"}
