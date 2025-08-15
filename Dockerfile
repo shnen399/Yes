@@ -1,17 +1,16 @@
-# syntax=docker/dockerfile:1.7
-# 內建好 Playwright + Chromium 的官方映像
-FROM mcr.microsoft.com/playwright/python:v1.46.0-jammy
+# 用最新 Playwright + Chromium 的官方映像
+FROM mcr.microsoft.com/playwright/python:v1.54.0-jammy
 
 WORKDIR /app
 
-# 先裝 Python 套件
+# 先安裝 Python 依賴
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 複製程式碼
+# 複製專案全部檔案
 COPY . .
 
-# 讓啟動腳本可執行（若不存在也不報錯）
+# 確保 startup.sh 可執行
 RUN chmod +x startup.sh || true
 
 EXPOSE 10000
