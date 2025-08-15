@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -eux
 
-# 在執行階段安裝 Playwright 需要的瀏覽器
+# 執行時安裝 chromium 瀏覽器
 python -m playwright install chromium
 
 # 啟動 FastAPI
