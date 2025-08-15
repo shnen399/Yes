@@ -1,9 +1,13 @@
+# syntax=docker/dockerfile:1.7
+
+# 輕量基底
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# 基本系統相依
+# 1) 一次裝好 Playwright 需要的系統依賴（較少變動→可快取）
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget curl ca-certificates xdg-utils \
     fonts-liberation libasound2 libatk1.0-0 libatk-bridge2.0-0 \
@@ -15,18 +19,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 先裝 requirements 以利用快取
+# 2) 先安裝 requirements（較少變動→可快取）
+#    使用 BuildKit 的 cache，加速 pip 下載
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --no-cache-dir -r requirements.txt
 
-# 安裝 Playwright + Chromium
+# 3) 安裝 Playwright + Chromium（很大，但不常變→可快取）
 RUN pip install --no-cache-dir playwright && \
     python -m playwright install chromium
 
-# 複製全部程式
-COPY ..
+# 4) 最後才複製整個專案（最常變→放最後，避免破壞上面快取）
+COPY . .
 
-# 啟動腳本確保可執行（存在就加權限，不存在也不會失敗）
+# 5) 確保啟動腳本可執行
 RUN chmod +x startup.sh || true
 
 EXPOSE 10000
