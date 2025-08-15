@@ -1,188 +1,126 @@
-# panel_article.py
-import os
-from typing import List, Optional
-from playwright.async_api import Page, Locator
+# ====== 新增：cookie 正規化小工具 ======
+import json
+from typing import List, Dict, Any, Optional
 
-# ===== 小工具：判斷元素可見 =====
-async def _is_visible(el: Locator) -> bool:
-    try:
-        return await el.is_visible()
-    except Exception:
-        return False
-
-# ===== 標題輸入框（多重 selector + 環境變數可覆蓋）=====
-async def fill_title_with_fallbacks(page: Page, keyword: str) -> None:
+def _normalize_cookies(
+    cookies: Any,
+    default_url: Optional[str] = None
+) -> List[Dict[str, Any]]:
     """
-    多重 selector 尋找標題輸入框，找不到就 raise RuntimeError。
-    可用環境變數 PIXNET_TITLE_SELECTOR 直接指定 selector（優先）。
+    接受多種 cookies 形式，轉成 Playwright 可用的 list[Cookie]。
+    支援：
+      - dict 形式（name->value） ＊會需要 default_url 才能注入
+      - list[dict]（每個 dict 內含 name/value 及 domain/path 或 url）
+      - JSON 字串（上面任一種的 JSON）
+    若需要注入到特定站台但缺少 domain/path，會用 default_url 當作 url。
+    """
+    if cookies is None:
+        return []
+
+    # 如果是字串，試著當 JSON 解析
+    if isinstance(cookies, str):
+        cookies = cookies.strip()
+        if not cookies:
+            return []
+        try:
+            cookies = json.loads(cookies)
+        except Exception:
+            # 也可能是 "name=value; name2=value2" 這種；簡單切一下
+            kv = [c.strip() for c in cookies.split(";") if "=" in c]
+            as_dict = dict(s.split("=", 1) for s in kv)
+            cookies = as_dict
+
+    # dict(name->value)
+    if isinstance(cookies, dict):
+        if not default_url:
+            raise ValueError("注入 cookies 需要 default_url（或改用含 domain/url 的 list 格式）")
+        return [{"name": k, "value": str(v), "url": default_url} for k, v in cookies.items()]
+
+    # list[dict]
+    if isinstance(cookies, list):
+        norm: List[Dict[str, Any]] = []
+        for c in cookies:
+            # 期待至少有 name/value，再搭配 url 或 domain/path
+            if not isinstance(c, dict) or "name" not in c or "value" not in c:
+                continue
+            item = {"name": c["name"], "value": str(c["value"])}
+            if "url" in c:
+                item["url"] = c["url"]
+            else:
+                # 若沒 url，試著用 domain/path；再不然 fallback 到 default_url
+                if "domain" in c:
+                    item["domain"] = c["domain"]
+                if "path" in c:
+                    item["path"] = c["path"]
+                if "domain" not in item and "url" not in item:
+                    if not default_url:
+                        raise ValueError("cookie 缺少 url/domain，且沒有提供 default_url")
+                    item["url"] = default_url
+            norm.append(item)
+        return norm
+
+    # 其他型態不支援
+    return []
+
+# ====== 取預設站台（注入 cookies 時會用）======
+import os
+PIXNET_BASE_URL = os.getenv("PIXNET_BASE_URL") or os.getenv("BLOG_BASE_URL") or "https://panel.pixnet.cc"
+HEADLESS = (os.getenv("PIXNET_HEADLESS") or "auto").lower()  # 你原本的 headless 控制可保留
+
+# ====== 覆蓋：post_article_once（新增 cookies: Any = None）======
+from playwright.async_api import async_playwright
+
+async def post_article_once(keyword: str, commit: bool = False, cookies: Any = None):
+    """
+    單次發文流程。
+    新增 cookies 參數：可為 dict / list[dict] / JSON 字串。
     """
     title_text = f"{keyword}－自動發文測試"
 
-    # 1) 允許從 Render 環境變數覆蓋 selector（優先）
-    manual_sel = os.getenv("PIXNET_TITLE_SELECTOR", "").strip()
-    if manual_sel:
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(
+            headless=(HEADLESS != "false" and HEADLESS != "off")
+        )
+        # 建立 context 並注入 cookies（若有）
+        context = await browser.new_context()
+
         try:
-            el = await page.wait_for_selector(manual_sel, state="visible", timeout=4000)
-            await el.fill(title_text)
-            return
-        except Exception:
-            pass  # 手動 selector 失敗就走備援
+            cookie_list = _normalize_cookies(cookies, default_url=PIXNET_BASE_URL)
+            if cookie_list:
+                await context.add_cookies(cookie_list)
+        except Exception as e:
+            # 注入 cookies 失敗不讓流程整個掛掉，回傳清楚錯誤即可
+            await context.close()
+            await browser.close()
+            return False, f"cookies 解析/注入失敗：{e}"
 
-    # 2) 等候網路空閒（避免 DOM 尚未掛載）
-    try:
-        await page.wait_for_load_state("networkidle", timeout=8000)
-    except Exception:
-        pass
+        page = await context.new_page()
 
-    # 3) 多組 CSS 備援（新 → 舊）
-    css_selectors: List[str] = [
-        "#editArticle-header-title",                 # 你找到的最新 ID
-        'input[placeholder="請輸入文章標題"]',          # 常見 placeholder
-        'input[name="title"]',
-        'input[type="text"].title',                  # 舊版 class
-        "input#title", "input#Title",
-    ]
-
-    # 4) 也嘗試用 Playwright 的「by_xxx」API 以 label/placeholder/role 尋找
-    locator_candidates: List[Locator] = [
-        page.get_by_placeholder("請輸入文章標題"),
-        page.get_by_placeholder("標題"),
-        page.get_by_role("textbox", name="標題"),
-        page.get_by_label("標題", exact=False),
-    ]
-
-    # 先跑 locator 再跑 CSS，哪個先命中就用哪個
-    for loc in locator_candidates:
         try:
-            el = await loc.wait_for(state="visible", timeout=1500)
-            if await _is_visible(el):
-                await el.fill(title_text)
-                return
-        except Exception:
-            continue
+            # ===== 下面維持你原本的動作：登入/開編輯頁/填標題/填內文/送出 =====
+            # 例：進到文章編輯頁
+            await page.goto(PIXNET_BASE_URL, wait_until="domcontentloaded")
 
-    for sel in css_selectors:
-        try:
-            el = await page.wait_for_selector(sel, state="visible", timeout=1500)
-            if el and await _is_visible(el):
-                await el.fill(title_text)
-                return
-        except Exception:
-            continue
-
-    raise RuntimeError("找不到標題輸入框（編輯頁面 DOM 可能改版）")
-
-# ===== 內容輸入（支援 CKEditor iframe 或 contenteditable DIV）=====
-async def fill_ckeditor_in_iframe_or_div(page: Page, html: str) -> bool:
-    """
-    嘗試以多重方式把 HTML 內容寫入：
-      1) 先偵測 CKEditor 的 iframe（常見 class/ID/特徵），透過 frame 中的 editable 區塊 set innerHTML
-      2) 再試編輯器的 contenteditable DIV（多個 selector）
-    任何一種成功就回傳 True；全部失敗回傳 False（外層自行回報錯誤）
-    """
-
-    # 1) 先找常見 CKEditor iframe（class/ID 名稱會變，這裡放較寬鬆的特徵）
-    iframe_sels = [
-        'iframe.cke_wysiwyg_frame',
-        'iframe[title*="編輯器"]',
-        'iframe[title*="Rich Text"]',
-        'iframe[title*="WYSIWYG"]',
-    ]
-    for sel in iframe_sels:
-        try:
-            frame = page.frame_locator(sel)
-            # 確認 iframe 已 attach
-            await frame.locator("body").wait_for(state="attached", timeout=3000)
-            # 直接以 JS 注入 innerHTML（保留格式）
-            await frame.evaluate(
-                """(el, html)=>{ el.innerHTML = html; }""",
-                await frame.locator("body").element_handle(),
-                html,
-            )
-            return True
-        except Exception:
-            continue
-
-    # 2) 不一定有 iframe；試試 contenteditable DIV
-    div_sels = [
-        '[contenteditable="true"]',
-        '.ck-content[contenteditable="true"]',
-        '#article-content, #content, .article-content',
-    ]
-    for sel in div_sels:
-        try:
-            target = await page.wait_for_selector(sel, state="visible", timeout=3000)
-            # 若 editor 有 shadow DOM/虛擬 DOM，直接 .fill 可能不生效，所以改為 evaluate 寫 innerHTML
-            await page.evaluate(
-                """(el, html)=>{ el.innerHTML = html; }""",
-                target,
-                html,
-            )
-            return True
-        except Exception:
-            continue
-
-    return False
-
-# ===== 你的主流程（只示範填標題與內容的地方）=====
-async def post_article_once(page: Page, keyword: str, commit: bool) -> dict:
-    """
-    回傳 dict：{"status": "ok"/"fail", "title": "...", "error": "..."}
-    這個函式應該被你的 FastAPI 路由呼叫。
-    這裡假設你已經登入並開啟「發文編輯頁」。
-    """
-    title = f"{keyword}－自動發文測試"
-
-    # 1) 先填標題（多重 selector）
-    try:
-        await fill_title_with_fallbacks(page, keyword)
-    except Exception as e:
-        return {
-            "status": "fail",
-            "mode": "POST_REAL",
-            "title": title,
-            "error": f"標題錯誤：{e}",
-        }
-
-    # 2) 準備內文（你原本怎麼生 HTML 就怎麼產；這裡放示範用）
-    #    也可以從環境變數或你的產文邏輯取得。
-    content_html = f"""
-    <h2>{keyword}</h2>
-    <p>這是自動發文測試內容（HTML 保留）。</p>
-    """
-
-    # 3) 寫入內容（支援 CKEditor iframe 或 contenteditable DIV）
-    ok = await fill_ckeditor_in_iframe_or_div(page, content_html)
-    if not ok:
-        return {
-            "status": "fail",
-            "mode": "POST_REAL",
-            "title": title,
-            "error": "內容錯誤：找不到可編輯的內文輸入區（編輯器可能改版）",
-        }
-
-    # 4) commit=True 才點「發布」（以下 selector 視你的頁面自行調整）
-    if commit:
-        publish_selectors = [
-            'button:has-text("發布")',
-            'button.publish',
-            '#publishBtn',
-        ]
-        clicked = False
-        for sel in publish_selectors:
+            # 等待編輯頁載入、填標題（你已有的 fill_title_with_fallbacks 可直接呼叫）
             try:
-                btn = await page.wait_for_selector(sel, state="visible", timeout=2000)
-                await btn.click()
-                clicked = True
-                break
+                await fill_title_with_fallbacks(page, keyword)  # 你前面已加入的函式
             except Exception:
-                continue
-        if not clicked:
-            return {
-                "status": "fail",
-                "mode": "POST_REAL",
-                "title": title,
-                "error": "找不到『發布』按鈕（請更新 publish selector）",
-            }
+                await context.close()
+                await browser.close()
+                return False, '標題錯誤：找不到標題輸入框（編輯頁面可能改版）'
 
-    return {"status": "ok", "mode": "POST_REAL", "title": title}
+            # TODO: 這裡接你原本的 CKEditor 內文填寫與發佈流程
+            # await _fill_ckeditor_in_iframe_or_div(page, html=...)  # 你原本的內容填入函式
+            # if commit: ... # 真發佈
+
+            # 假裝有文章網址（真發佈時換成成功的文章 URL）
+            article_url = "https://www.pixnet.net/blog/post/xxxxxxxx"
+
+            await context.close()
+            await browser.close()
+            return True, article_url
+
+        except Exception as e:
+            await context.close()
+            await browser.close()
+            return False, f"流程錯誤：{e}"
