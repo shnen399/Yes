@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir playwright && \
     python -m playwright install chromium
 
 # 複製全部程式
-COPY . .
+COPY ..
 
 # 啟動腳本確保可執行（存在就加權限，不存在也不會失敗）
 RUN chmod +x startup.sh || true
