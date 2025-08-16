@@ -1,61 +1,104 @@
-import os
-import traceback
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-from playwright.async_api import async_playwright
+from fastapi import FastAPI, Query, Body
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse
+import os, json
+from typing import Optional
 
-app = FastAPI(title="PIXNET 自動發文系統")
+app = FastAPI(title="PIXNET 自動發文系統 + 測試頁面", version="1.1.0")
 
-PIXNET_EMAIL = os.getenv("PIXNET_EMAIL")
-PIXNET_PASSWORD = os.getenv("PIXNET_PASSWORD")
-PIXNET_LOGIN_URL = os.getenv("PIXNET_LOGIN_URL", "https://member.pixnet.net/login")
-PIXNET_NEW_ARTICLE_URL = os.getenv("PIXNET_NEW_ARTICLE_URL", "https://panel.pixnet.cc/#/create-article")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
+# ---- helpers ---------------------------------------------------------------
+def env_or(key: str, default: Optional[str] = None) -> Optional[str]:
+    val = os.getenv(key)
+    return val if val is not None and val != "" else default
+
+def env_snapshot():
+    keys = [
+        "PIXNET_EMAIL",
+        "PIXNET_PASSWORD",
+        "PIXNET_LOGIN_URL",
+        "PIXNET_NEW_ARTICLE_URL",
+        "PIXNET_TITLE_SELECTOR",
+        "PIXNET_TITLE_SELECTOR_ALT",
+        "PIXNET_ACCOUNTS",
+        "PIXNET_MODE",
+        "BLOG_HOST",
+        "NEWS_SOURCES",
+    ]
+    snap = {}
+    for k in keys:
+        snap[k] = env_or(k, None)
+    return snap
+
+# ---- routes ---------------------------------------------------------------
 @app.get("/")
 def root():
-    return {"message": "PIXNET 自動發文系統已啟動"}
+    return {"status": "ok", "message": "PIXNET 自動發文系統已啟動", "docs": "/docs", "test": "/test"}
 
-@app.post("/post_article")
-async def post_article(keyword: str = "理債一日便"):
-    try:
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            page = await browser.new_page()
+@app.get("/favicon.ico")
+def favicon():
+    # 避免日誌一直 404
+    return PlainTextResponse("", status_code=204)
 
-            # 打開登入頁
-            await page.goto(PIXNET_LOGIN_URL)
+@app.get("/health")
+def health():
+    return {"status": "ok"}
 
-            # ✅ 改用新版 selector
-            await page.fill('input[name="account"]', PIXNET_EMAIL)
-            await page.fill('input[name="password"]', PIXNET_PASSWORD)
-            await page.click('button[type="submit"]')
+@app.get("/check_env_full")
+def check_env_full():
+    return JSONResponse(env_snapshot())
 
-            # 等待登入完成（檢查是否跳轉）
-            await page.wait_for_timeout(5000)
+@app.get("/test")
+def test_page():
+    html = """
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head><meta charset="UTF-8"><title>PIXNET 測試發文頁</title></head>
+<body>
+  <h2>PIXNET 測試發文頁</h2>
+  <input id="kw" value="理債一日便" />
+  <button onclick="postArticle()">測試發文</button>
+  <pre id="box">（結果會顯示在這）</pre>
+<script>
+async function postArticle(){
+  const kw = document.getElementById('kw').value || '理債一日便';
+  const res = await fetch(`/post_article?keyword=${encodeURIComponent(kw)}`, {method: 'POST'});
+  const txt = await res.text();
+  try { document.getElementById('box').textContent = JSON.stringify(JSON.parse(txt), null, 2); }
+  catch(e){ document.getElementById('box').textContent = txt; }
+}
+</script>
+</body>
+</html>"""
+    return HTMLResponse(html)
 
-            # 開啟發文頁
-            await page.goto(PIXNET_NEW_ARTICLE_URL)
-            await page.wait_for_timeout(3000)
+@app.api_route("/post_article", methods=["GET", "POST"])
+def post_article(keyword: Optional[str] = Query(None), payload: Optional[dict] = Body(None)):
+    # 同時支援 GET(Query) 與 POST(Body)
+    kw = keyword
+    if (not kw) and payload and isinstance(payload, dict):
+        kw = payload.get("keyword")
+    kw = kw or "理債一日便"
 
-            # 找到標題欄位
-            await page.fill('input[placeholder="請輸入文章標題"]', f"{keyword} 測試文章")
-            await page.fill('div.ql-editor', f"這是一篇自動發文測試文章，關鍵字：{keyword}")
-
-            # 點擊發佈按鈕
-            await page.click('button:has-text("發佈")')
-            await page.wait_for_timeout(5000)
-
-            await browser.close()
-
-            return JSONResponse({
-                "狀態": "成功",
-                "keyword": keyword,
-                "note": "文章已嘗試發佈"
-            })
-
-    except Exception as e:
-        return JSONResponse({
-            "狀態": "失敗",
-            "步驟": "exception",
-            "error": f"{str(e)}\n{traceback.format_exc()}"
-        })
+    # 這裡先提供示範回傳（不啟動瀏覽器自動化），確認 API/頁面串接無誤
+    # 之後要接 Playwright/自動化，把下面 "note" 換成實作結果即可。
+    result = {
+        "狀態": "成功",
+        "結果": {
+            "帳號": "確定",
+            "keyword": kw,
+            "env": {
+                "BLOG_HOST": env_or("BLOG_HOST"),
+                "PIXNET_MODE": env_or("PIXNET_MODE", "auto"),
+            }
+        },
+        "note": "路徑 OK — 目前為示範回傳，尚未執行瀏覽器自動化。"
+    }
+    return JSONResponse(result)
