@@ -145,3 +145,28 @@ def check_env():
     for k in keys:
         result[k] = os.getenv(k, "❌ NOT SET")
     return result
+from fastapi import FastAPI
+import os
+
+app = FastAPI(title="PIXNET 自動發文系統")
+
+@app.get("/")
+def root():
+    return {"message": "系統正常運作中"}
+
+@app.get("/check_env")
+def check_env():
+    """
+    檢查目前系統能讀到的環境變數（只回傳跟 PIXNET 有關的）
+    """
+    keys = [
+        "PIXNET_EMAIL",
+        "PIXNET_PASSWORD",
+        "PIXNET_LOGIN_URL",
+        "PIXNET_NEW_ARTICLE_URL",
+        "PIXNET_TITLE_SELECTOR",
+    ]
+    result = {}
+    for k in keys:
+        result[k] = os.getenv(k, "❌ NOT SET")
+    return result
