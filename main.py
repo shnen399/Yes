@@ -1,36 +1,28 @@
 # main.py
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+import os
 
-app = FastAPI(title="PIXNET 自動發文系統 + 測試頁面", version="0.1.0")
+app = FastAPI(title="PIXNET 自動發文系統 + 測試頁面", version="0.1.1")
 
-# CORS（測試用：全部打開）
+# ---- CORS（保險起見，前端或 Swagger 皆可呼叫）----
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 可選：若你的發文流程寫在 panel_article.py
-try:
-    from panel_article import post_article_once  # def post_article_once(keyword: str) -> dict
-except Exception:
-    post_article_once = None
-
-
-@app.get("/health")
-def health():
-    return {"ok": True}
-
-
-@app.get("/check_env_full")
-def check_env_full():
-    # 你原本的環境檢查內容可放這裡；先回一些關鍵 env 狀況
-    import os
+# ---- 小工具 ----
+def get_env_snapshot():
+    # 讀環境變數；密碼打碼
+    masked_pw = os.getenv("PIXNET_PASSWORD", "")
+    if masked_pw:
+        masked_pw = masked_pw[:2] + "******" + masked_pw[-2:]
     return {
+        "PIXNET_EMAIL": os.getenv("PIXNET_EMAIL"),
+        "PIXNET_PASSWORD": masked_pw,
         "PIXNET_LOGIN_URL": os.getenv("PIXNET_LOGIN_URL"),
         "PIXNET_NEW_ARTICLE_URL": os.getenv("PIXNET_NEW_ARTICLE_URL"),
         "PIXNET_TITLE_SELECTOR": os.getenv("PIXNET_TITLE_SELECTOR"),
@@ -40,91 +32,112 @@ def check_env_full():
         "NEWS_SOURCES": os.getenv("NEWS_SOURCES"),
     }
 
+def ok(payload):
+    return JSONResponse({"status": "success", **payload})
 
-@app.post("/post_article")
-def post_article(keyword: str = Query(default="理債一日便")):
+def fail(step: str, msg: str):
+    return JSONResponse({"status": "success", "result": {"status": "fail", "step": step, "error": msg}})
+
+# ---- 健康檢查 ----
+@app.get("/health")
+def health():
+    return ok({"message": "ok"})
+
+# ---- 檢查環境變數（完整）----
+@app.get("/check_env_full")
+def check_env_full():
+    return ok(get_env_snapshot())
+
+# ---- 發文 API：同時支援 GET 與 POST（關鍵修正）----
+@app.api_route("/post_article", methods=["GET", "POST"])
+async def post_article(request: Request, keyword: str = Query(default="理債一日便")):
     """
-    一律回 JSON，不讓前端誤判為 HTML。
+    這裡示範流程與檢查。實際自動化（登入/填表/送出）你可在這裡串接 Playwright 或 Selenium。
+    目前先做參數與環境檢查，確保 API 流程通順，回傳固定格式 JSON。
     """
-    # 真的有你的發文邏輯就呼叫；否則回覆友善訊息
-    if post_article_once:
-        try:
-            result = post_article_once(keyword)  # 預期回 dict
-            if not isinstance(result, dict):
-                result = {"status": "fail", "step": "run", "error": "post_article_once 回傳非 dict"}
-        except Exception as e:
-            result = {"status": "fail", "step": "run", "error": f"{type(e).__name__}: {e}"}
-    else:
-        result = {
-            "status": "fail",
-            "step": "env",
-            "error": "找不到 post_article_once（panel_article.py），請確認檔案與匯入。",
-        }
+    # 若前端用 POST，但沒送 body，FastAPI 有時仍可；為避免 422，我們不強制 body。
+    # 只要 method 正確即可繼續。
+    env = get_env_snapshot()
 
-    return JSONResponse({"status": "success", "result": result})
+    # 基本檢查：必要的 selector 與入口網址
+    if not os.getenv("PIXNET_NEW_ARTICLE_URL"):
+        return fail("env", "缺少發文入口：PIXNET_NEW_ARTICLE_URL")
 
+    title_selector = os.getenv("PIXNET_TITLE_SELECTOR")
+    if not title_selector:
+        return fail("env", "缺少欄位選擇器：PIXNET_TITLE_SELECTOR")
 
+    # 這裡本來會去做自動化。為了先確認路徑通了，回傳模擬結果。
+    # 你未來把自動化結果塞進 result 就好。
+    result = {
+        "keyword": keyword,
+        "note": "路徑 OK ─ 目前為示範回傳，尚未執行瀏覽器自動化。",
+    }
+    return ok({"result": {"status": "ok", **result}})
+
+# ---- 測試頁（按按鈕 → 用 POST 呼叫 /post_article，固定回 JSON）----
 @app.get("/test", response_class=HTMLResponse)
 def test_page():
-    """
-    簡易測試頁：按按鈕就呼叫 /post_article
-    """
     html = """
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
   <meta charset="UTF-8" />
   <title>PIXNET 測試發文頁</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding: 20px; }
-    button { padding: 8px 12px; }
-    input { padding: 6px 8px; width: 260px; }
-    pre { white-space: pre-wrap; word-break: break-all; background:#111; color:#0f0; padding:12px; border-radius:8px; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Noto Sans TC", Arial; padding: 16px; }
+    button { padding: 10px 14px; border-radius: 8px; border: 1px solid #ddd; background:#fff; }
+    #result { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #f8f9fa; padding: 12px; border-radius: 8px; border:1px solid #eee; }
+    input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 8px; }
     .row { margin: 12px 0; }
   </style>
 </head>
 <body>
   <h2>PIXNET 測試發文頁</h2>
-
   <div class="row">
-    <input id="kw" placeholder="關鍵字（預設：理債一日便）" />
-    <button onclick="postArticle()">測試發文</button>
-    <span id="status"></span>
+    <label>keyword：</label>
+    <input id="kw" placeholder="理債一日便" value="理債一日便" />
   </div>
+  <div class="row">
+    <button onclick="postArticle()">測試發文（POST）</button>
+    <button onclick="getArticle()">測試發文（GET）</button>
+  </div>
+  <h4>結果：</h4>
+  <pre id="result">尚未送出</pre>
 
-  <pre id="result">尚未測試</pre>
-
-  <script>
-  async function postArticle() {
-    const box = document.getElementById('result');
-    const status = document.getElementById('status');
-    const kw = document.getElementById('kw').value || '理債一日便';
-
-    status.textContent = '發送中…';
-    box.textContent = '';
-
-    try {
-      const resp = await fetch('/post_article?keyword=' + encodeURIComponent(kw), {
-        method: 'POST'
-      });
-      const text = await resp.text();
-
-      let data;
-      try {
-        data = JSON.parse(text); // 優先當 JSON 解析
-      } catch (e) {
-        data = { raw: text };    // 若不是 JSON，直接顯示原文（避免 Unexpected token '<'）
-      }
-
-      box.textContent = JSON.stringify(data, null, 2);
-      status.textContent = '完成';
-    } catch (err) {
-      box.textContent = JSON.stringify({ error: String(err) }, null, 2);
-      status.textContent = '失敗';
-    }
+<script>
+async function postArticle(){
+  const box = document.getElementById('result');
+  const kw = document.getElementById('kw').value || '理債一日便';
+  box.textContent = '發送中...';
+  try{
+    const resp = await fetch('/post_article?keyword=' + encodeURIComponent(kw), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}) // 給個空物件，避免部分環境 422
+    });
+    const data = await resp.json();
+    box.textContent = JSON.stringify(data, null, 2);
+  }catch(e){
+    box.textContent = '請求錯誤：' + e;
   }
-  </script>
+}
+
+async function getArticle(){
+  const box = document.getElementById('result');
+  const kw = document.getElementById('kw').value || '理債一日便';
+  box.textContent = '發送中...';
+  try{
+    const resp = await fetch('/post_article?keyword=' + encodeURIComponent(kw), { method: 'GET' });
+    const data = await resp.json();
+    box.textContent = JSON.stringify(data, null, 2);
+  }catch(e){
+    box.textContent = '請求錯誤：' + e;
+  }
+}
+</script>
 </body>
 </html>
 """
-    return HTMLResponse(html)
+    return HTMLResponse(content=html)
