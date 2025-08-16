@@ -122,3 +122,26 @@ async def api_post_article(payload: dict):
             },
             status_code=500
         )
+import os
+from fastapi import FastAPI
+
+app = FastAPI(title="PIXNET 自動發文系統")
+
+# 其他原本的程式碼 ... 略
+
+@app.get("/check_env")
+def check_env():
+    """
+    檢查目前系統能讀到的環境變數（只回傳跟 PIXNET 有關的）
+    """
+    keys = [
+        "PIXNET_EMAIL",
+        "PIXNET_PASSWORD",
+        "PIXNET_LOGIN_URL",
+        "PIXNET_NEW_ARTICLE_URL",
+        "PIXNET_TITLE_SELECTOR",
+    ]
+    result = {}
+    for k in keys:
+        result[k] = os.getenv(k, "❌ NOT SET")
+    return result
