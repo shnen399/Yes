@@ -1,33 +1,32 @@
 # main.py
-from fastapi import FastAPI, Query, Request
-from fastapi.responses import JSONResponse, HTMLResponse
-import os
+from fastapi import FastAPI, Query
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+import os, asyncio, traceback
 
 app = FastAPI(title="PIXNET 自動發文系統 + 測試頁面", version="0.1.0")
 
-# --- 安全匯入發文函式（避免匯入錯誤讓整個服務掛掉） ---
-try:
-    # 你專案裡負責實作發文流程的函式
-    from panel_article import post_article_once  # noqa: F401
-except Exception as e:
-    # 若匯入失敗，用保護性實作回應錯誤（方便在 /check_env_full 看到問題）
-    _panel_import_error = e
+# 允許 CORS（Swagger / 手機測試都更順）
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    def post_article_once(keyword: str):
-        return {
-            "status": "fail",
-            "step": "env",
-            "error": f"panel_article 載入失敗: {repr(_panel_import_error)}",
-        }
+@app.get("/")
+def root():
+    return {
+        "msg": "Hello from PIXNET bot",
+        "docs": "/docs",
+        "test": "/test",
+    }
 
-
-# --- 基本健康檢查 ---
-@app.get("/health", response_class=HTMLResponse)
+@app.get("/health")
 def health():
-    return "OK"
+    return {"status": "ok"}
 
-
-# --- 檢查環境變數（完整）---
 @app.get("/check_env_full")
 def check_env_full():
     keys = [
@@ -41,62 +40,127 @@ def check_env_full():
         "BLOG_HOST",
         "NEWS_SOURCES",
     ]
-    envs = {k: os.getenv(k) for k in keys}
-    # 額外提示 title selector 是否缺少
-    if not envs.get("PIXNET_TITLE_SELECTOR"):
-        envs["PIXNET_TITLE_SELECTOR"] = None
-        envs["__HINT__"] = '缺少選擇器: PIXNET_TITLE_SELECTOR（例如：input[name="title"] 或 input[placeholder="請輸入文章標題"]）'
-    return envs
+    out = {}
+    for k in keys:
+        v = os.getenv(k)
+        if v is None:
+            out[k] = None
+        elif k == "PIXNET_PASSWORD":
+            out[k] = "********" if v else v
+        else:
+            out[k] = v
+    return out
 
-
-# --- 發文：同時支援 GET / POST ---
-# 用預設 keyword，手機上也能直接按 Execute 或用網址測
-@app.get("/post_article")
-@app.post("/post_article")
-def post_article(
-    request: Request,
-    keyword: str = Query("理債一日便", description="要發的主題關鍵字"),
-):
+# 同一路徑同時支援 GET / POST，行動裝置用網址列測也可以
+@app.api_route("/post_article", methods=["GET", "POST"])
+async def post_article(keyword: str = Query(default="理債一日便", description="要發文的關鍵字/主題")):
     """
-    透過 GET 或 POST 觸發一次自動發文。
-    瀏覽器可直接打：
-    https://yes-6zei.onrender.com/post_article?keyword=理債一日便
+    觸發一次自動發文：
+    - 會動態 import panel_article，呼叫 post_article_once(keyword)
+    - 若找不到函式或出錯，回傳 {status: 'fail', step, error, trace}
     """
-    result = post_article_once(keyword)
-    # 統一回傳 JSON
-    return JSONResponse(content={"status": "success", "result": result})
+    try:
+        # 動態載入，避免啟動時循環匯入
+        try:
+            mod = __import__("panel_article")
+        except Exception as e:
+            return {
+                "status": "success",
+                "result": {
+                    "status": "fail",
+                    "step": "import_module",
+                    "error": f"無法匯入 panel_article：{e}",
+                    "trace": traceback.format_exc(),
+                },
+            }
 
+        func = getattr(mod, "post_article_once", None) or getattr(mod, "post_article", None)
+        if not callable(func):
+            return {
+                "status": "success",
+                "result": {
+                    "status": "fail",
+                    "step": "locate_function",
+                    "error": "找不到 panel_article.post_article_once()",
+                },
+            }
 
-# --- 簡單測試頁：手機上也能一鍵觸發 ---
+        # 呼叫（支援同步/非同步）
+        res = func(keyword=keyword) if "keyword" in getattr(func, "__code__", None).co_varnames else func(keyword)
+        if asyncio.iscoroutine(res):
+            res = await res
+
+        # 確保是可序列化
+        if isinstance(res, (str, int, float)) or res is None:
+            res = {"data": res}
+
+        return {"status": "success", "result": res}
+
+    except Exception as e:
+        # 統一錯誤格式，永遠回 JSON
+        return {
+            "status": "success",
+            "result": {
+                "status": "fail",
+                "step": "runtime",
+                "error": str(e),
+                "trace": traceback.format_exc(),
+            },
+        }
+
 @app.get("/test", response_class=HTMLResponse)
-def test_page(keyword: str = Query("理債一日便")):
-    html = f"""
-<!DOCTYPE html>
+def test_page():
+    # 測試頁：按鈕會呼叫 /post_article?keyword=xxx
+    html = """
+<!doctype html>
 <html lang="zh-TW">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="utf-8"/>
   <title>PIXNET 測試發文頁</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Noto Sans TC', Arial, sans-serif; padding: 16px; }
+    h2 { margin: 0 0 12px; }
+    input, button { font-size: 16px; padding: 8px 12px; }
+    #kw { width: 240px; }
+    pre { background: #111; color: #0f0; padding: 12px; border-radius: 8px; overflow: auto; }
+  </style>
 </head>
 <body>
   <h2>PIXNET 測試發文頁</h2>
-  <button onclick="postArticle()">測試發文</button>
-  <pre id="result">（尚未執行）</pre>
+  <div style="margin-bottom:12px;">
+    <input id="kw" placeholder="輸入關鍵字，例如：理債一日便" value="理債一日便"/>
+    <button onclick="postArticle()">測試發文</button>
+  </div>
+  <div id="status">就緒</div>
+  <pre id="result">{}</pre>
 
 <script>
-async function postArticle() {{
+async function postArticle() {
   const box = document.getElementById('result');
-  box.textContent = "發送中…";
-  try {{
-    const url = '/post_article?keyword=' + encodeURIComponent('{keyword}');
-    const res = await fetch(url, {{ method: 'GET' }});
-    const data = await res.json();
+  const status = document.getElementById('status');
+  const kw = document.getElementById('kw').value || '理債一日便';
+  status.textContent = '發送中…';
+  box.textContent = '';
+
+  try {
+    const resp = await fetch('/post_article?keyword=' + encodeURIComponent(kw), { method: 'POST' });
+    const text = await resp.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      data = { raw: text };
+    }
     box.textContent = JSON.stringify(data, null, 2);
-  }} catch (err) {{
-    box.textContent = '發送失敗: ' + err;
-  }}
-}}
+    status.textContent = '完成';
+  } catch (err) {
+    box.textContent = JSON.stringify({ error: String(err) }, null, 2);
+    status.textContent = '失敗';
+  }
+}
 </script>
 </body>
 </html>
-"""
-    return HTMLResponse(html)
+    """
+    return HTMLResponse(content=html)
