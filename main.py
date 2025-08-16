@@ -170,3 +170,19 @@ def check_env():
     for k in keys:
         result[k] = os.getenv(k, "❌ NOT SET")
     return result
+@app.get("/check_env_full")
+def check_env_full():
+    import os
+    keys = [
+        "BLOG_HOST",
+        "NEWS_SOURCES",
+        "PIXNET_ACCOUNTS",
+        "PIXNET_EMAIL",
+        "PIXNET_PASSWORD",
+        "PIXNET_LOGIN_URL",
+        "PIXNET_MODE",
+        "PIXNET_NEW_ARTICLE_URL",
+        "PIXNET_TITLE_SELECTOR",
+    ]
+    envs = {k: os.getenv(k, "(not set)") for k in keys}
+    return envs
