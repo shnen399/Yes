@@ -1,17 +1,17 @@
-# 用最新 Playwright + Chromium 的官方映像
-FROM mcr.microsoft.com/playwright/python:v1.54.0-jammy
+# 用 Playwright + Chromium 官方映像
+FROM mcr.microsoft.com/playwright/python:v1.49.0-focal
 
 WORKDIR /app
 
-# 先安裝 Python 依賴
+# 先裝 Python 依賴
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 複製專案全部檔案
+# 複製全部程式
 COPY . .
 
-# 確保 startup.sh 可執行
-RUN chmod +x startup.sh || true
-
+# Render 會用到的對外埠（你目前就是 10000）
 EXPOSE 10000
-CMD ["bash", "startup.sh"]
+
+# 直接啟動 FastAPI（不再用 startup.sh）
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]
