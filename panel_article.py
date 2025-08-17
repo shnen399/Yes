@@ -1,10 +1,18 @@
+# panel_article.py  —— 兼容 main.py 的新版
 import os
 import random
 import time
 from typing import Dict, Tuple, List, Optional
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
-# 讀帳號（支援逗號或換行分隔）
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+# 用於自動產文（當 content 沒給時）
+try:
+    from article_generator import generate_article, DEFAULT_KEYWORDS
+except Exception:
+    generate_article = None
+    DEFAULT_KEYWORDS = []
+
+# 讀帳號（支援逗號或換行）
 def _read_accounts_from_env() -> List[Tuple[str, str]]:
     raw = os.getenv("PIXNET_ACCOUNTS", "").strip()
     if not raw:
@@ -25,24 +33,41 @@ def _env(name: str, default: str = "") -> str:
     v = os.getenv(name, "") or default
     return v.strip()
 
-def post_article_once(keyword: str = "理債一日便") -> Dict:
+def _mk_content_html(title: str, content_md: Optional[str], keywords: Optional[List[str]]) -> str:
+    """
+    把 main.py 傳進來的 content（Markdown）轉成可貼到 PIXNET 編輯器的 HTML。
+    若 content_md 為空，則用 article_generator 自動產生長文。
+    """
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    # 沒有內容就自動產文
+    if not content_md:
+        topic = title.split("｜")[0] if "｜" in title else title
+        if generate_article:
+            kws = keywords or DEFAULT_KEYWORDS or []
+            content_md = generate_article(topic=topic, keywords=kws, city="台灣", min_words=2100)
+        else:
+            content_md = f"# {topic}\n\n（系統未載入 article_generator，改用簡易模板）\n\n產生時間：{ts}\n"
+
+    # 最穩：以 <pre> 包 Markdown 純文字，不做轉換，避免編輯器吞字
+    return f"<pre>{content_md}</pre>\n<p>（自動發文時間：{ts}）</p>"
+
+def post_article_once(
+    title: str = "理債一日便｜自動發文測試",
+    content: Optional[str] = None,          # Markdown；若空會自動產生
+    keywords: Optional[List[str]] = None,   # 供自動產文使用（可為 None）
+) -> Dict:
     accounts = _read_accounts_from_env()
     if not accounts:
         return {"status": "fail", "error": "找不到帳號，請先設定 PIXNET_ACCOUNTS 環境變數"}
 
     email, password = random.choice(accounts)
+
     PIXNET_LOGIN_URL = _env("PIXNET_LOGIN_URL", "https://panel.pixnet.cc/")
     BLOG_HOST = _env("BLOG_HOST", "")
     HEADLESS = _env("HEADLESS", "true").lower() != "false"  # 預設 headless
 
-    ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    title = f"{keyword} - 自動發文測試 {ts}"
-    content_html = f"""
-    <p>這是一篇自動發文測試文章（Playwright）。</p>
-    <p>關鍵字：<strong>{keyword}</strong></p>
-    <p>產生時間：{ts}</p>
-    <p><a href="https://lihi.cc/japMO" target="_blank">理債一日便專屬連結</a></p>
-    """
+    content_html = _mk_content_html(title, content, keywords)
 
     try:
         with sync_playwright() as p:
