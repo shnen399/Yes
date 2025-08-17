@@ -70,8 +70,7 @@ def post_article_once(keyword: str = "理債一日便") -> Dict:
                 except Exception:
                     page.click('button[type="submit"]', timeout=3000)
             except PWTimeout:
-                # 可能已經有登入狀態
-                pass
+                pass  # 可能已登入
 
             # 確認已進入 panel
             for _ in range(3):
@@ -103,7 +102,7 @@ def post_article_once(keyword: str = "理債一日便") -> Dict:
             if not filled_title:
                 raise RuntimeError("找不到標題輸入框")
 
-            # 4) 內文（常見 Quill/ProseMirror）
+            # 4) 內文（Quill/ProseMirror）
             editor_ok = False
             for sel in ["div.ql-editor", 'div[contenteditable="true"]', "div.ProseMirror"]:
                 try:
