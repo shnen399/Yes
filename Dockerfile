@@ -1,17 +1,15 @@
-# 用 Playwright + Chromium 官方映像
-FROM mcr.microsoft.com/playwright/python:v1.49.0-focal
+# ---- 使用 Playwright 官方基底映像 ----
+FROM mcr.microsoft.com/playwright/python:v1.48.2-focal
 
+# 設定工作目錄
 WORKDIR /app
 
-# 先裝 Python 依賴
+# 複製需求檔並安裝
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 複製全部程式
+# 複製程式碼
 COPY . .
 
-# Render 會用到的對外埠（你目前就是 10000）
-EXPOSE 10000
-
-# 直接啟動 FastAPI（不再用 startup.sh）
+# 預設啟動指令 (FastAPI + Uvicorn)
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "10000"]
