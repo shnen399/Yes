@@ -1,8 +1,20 @@
 services:
   - type: web
-    name: yes-p5l2
+    name: pixnet-autoposter
     env: python
-    buildCommand: |
-      pip install -r requirements.txt
-      python -m playwright install --with-deps chromium
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    plan: free
+    buildCommand: "bash render-build.sh"
+    startCommand: "bash startup.sh"
+    envVars:
+      - key: BLOG_HOST
+        value: https://ixnet888.pixnet.net/blog
+      - key: PIXNET_LOGIN_URL
+        value: https://panel.pixnet.cc/
+      - key: PIXNET_ACCOUNTS
+        value: |
+          alone.hoverfly.kele@rapidletter.net:co13572888
+          t0970313177@gmail.com:co13572888
+      - key: PIXNET_MODE
+        value: live
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: /opt/render/.cache/ms-playwright
