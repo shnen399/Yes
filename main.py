@@ -1,76 +1,35 @@
-from fastapi import FastAPI, Query
-from fastapi.responses import JSONResponse, PlainTextResponse
-import os
-import urllib.parse
-import logging
+# ---- imports（若已有就不用重複）----
+from typing import Optional, Dict
+from fastapi import Query
 
-app = FastAPI(title="PIXNET 自動發文系統", version="1.0.1")
+# ---- 你的預設標題與內容（可自行修改）----
+DEFAULT_TITLE = "理債一日便｜2025 最新整合與核貸全攻略"
+DEFAULT_CONTENT = """
+在現今的經濟環境中，許多人在資金調度時會首選「理債一日便」這類快速整合方案……
+（此處放你原本那篇 2000+ 字的文章全文）
+""".strip()
 
-# 日誌設定
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-log = logging.getLogger("pixnet")
-
-# 假裝的發文器（你原本的實作可接回來）
-def post_to_pixnet(title: str, content: str, keywords: list[str]) -> str:
-    """
-    回傳發文後的文章連結（DEMO 用，實際可替換成你原本的函式）
-    """
-    # 這裡只是示範，照你的原本流程去發文即可
-    return "https://www.pixnet.net/blog/post/123456-demo"
-
-@app.get("/", response_class=JSONResponse)
-def root():
-    mode = "live" if os.getenv("PIXNET_LIVE") == "1" else "demo"
-    return {"ok": True, "mode": mode, "hint": 'GET "/post_article" 測試發文'}
-
-@app.get("/favicon.ico", response_class=PlainTextResponse)  # 擋掉 404 噪音
-def favicon():
-    return ""
-
-@app.get("/check_env", response_class=JSONResponse)
-def check_env():
-    return {
-        "PIXNET_LIVE": os.getenv("PIXNET_LIVE", "0"),
-        "HEADLESS": os.getenv("HEADLESS", "true"),
-    }
-
-@app.get("/post_article", response_class=JSONResponse)
+# ---- 路由：可選參數，若沒帶就用預設值 ----
+@app.get("/post_article")
 def post_article(
-    title: str = Query(..., description="文章標題"),
-    content: str = Query(..., description="文章內容"),
-    keywords: str = Query("", description="以逗號分隔的關鍵字"),
-):
-    """
-    注意：keywords 請用「逗號分隔的字串」，例如：
-    理債一日便最新核貸流程, 理債一日便申請條件, 貸款技巧
-    """
-    try:
-        # 乾淨的 log（把網址編碼還原）
-        pretty_title = urllib.parse.unquote_plus(title)
-        pretty_content = urllib.parse.unquote_plus(content)
-        pretty_keywords = urllib.parse.unquote_plus(keywords)
+    title: Optional[str] = Query(None, description="文章標題（可省略，預設為 DEFAULT_TITLE）"),
+    content: Optional[str] = Query(None, description="文章內容（可省略，預設為 DEFAULT_CONTENT）"),
+    keywords: Optional[str] = Query(None, description="以逗號分隔的關鍵字，可省略"),
+) -> Dict[str, str]:
+    t = (title or DEFAULT_TITLE).strip()
+    c = (content or DEFAULT_CONTENT).strip()
+    ks = []
+    if keywords:
+        # 允許用逗號或全形逗號分隔
+        ks = [k.strip() for k in keywords.replace("，", ",").split(",") if k.strip()]
 
-        # 解析關鍵字：逗號分隔 → list
-        kw_list = [k.strip() for k in pretty_keywords.split(",") if k.strip()]
+    # 這裡呼叫你既有的發文函式（保持不動）
+    # 例如：result = post_to_pixnet(title=t, content=c, keywords=ks)
+    result = post_to_pixnet(title=t, content=c, keywords=ks)
 
-        # 呼叫你的發文流程
-        url = post_to_pixnet(pretty_title, pretty_content, kw_list)
-
-        # 乾淨輸出
-        log.info("✅ 發文成功")
-        log.info(f"標題：{pretty_title}")
-        log.info(f"網址：{url}")
-
-        return {
-            "status": "success",
-            "title": pretty_title,
-            "url": url,
-            "hint": '設定 PIXNET_LIVE=1 才會真的發文',
-        }
-    except Exception as e:
-        log.info("❌ 發文失敗")
-        log.exception(e)
-        return {
-            "status": "fail",
-            "error": str(e),
-        }
+    return {
+        "status": "success" if result.get("ok") else "fail",
+        "title": t,
+        "url": result.get("url", ""),
+        "hint": "未帶參數時會使用預設標題與長文內容",
+    }
